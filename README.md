@@ -149,17 +149,19 @@ try {
 
 } catch (Exception $e) {
     debugLog("Exception caught: " . $e->getMessage());
-    http_response_code(500);
+    // Use 200 instead of 500 to prevent IIS/Apache from intercepting and returning HTML
+    http_response_code(200);
     echo json_encode([
         'success' => false,
         'message' => $e->getMessage()
     ]);
 } catch (Error $e) {
     debugLog("Fatal Error caught: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
-    http_response_code(500);
+    // Use 200 instead of 500 to prevent IIS/Apache from intercepting and returning HTML
+    http_response_code(200);
     echo json_encode([
         'success' => false,
-        'message' => "Internal Server Error"
+        'message' => "Internal Server Error: " . $e->getMessage()
     ]);
 }
 ?>
