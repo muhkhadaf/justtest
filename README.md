@@ -140,7 +140,9 @@ try {
     }
 
     debugLog("10. Loop finished, returning JSON");
-    $database->disconnect();
+    if ($conn && is_resource($conn)) {
+        sqlsrv_close($conn);
+    }
 
     echo json_encode([
         'success' => true,
