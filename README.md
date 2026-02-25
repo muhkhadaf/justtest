@@ -4,18 +4,31 @@ require_once __DIR__ . '/../../../helpers/DateHelper.php';
 
 header('Content-Type: application/json');
 
+function debugLog($msg) {
+    file_put_contents(__DIR__ . '/debug_get_weeks.log', date('Y-m-d H:i:s') . ' - ' . $msg . PHP_EOL, FILE_APPEND);
+}
+
+debugLog("1. Started get_weeks.php");
+
 // Check authentication
 if (!isLoggedIn()) {
+    debugLog("Auth failed");
     http_response_code(401);
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
 
 try {
+    debugLog("2. Instantiating DB");
     $database = new MyDatabase();
+    
+    debugLog("3. Connecting DB");
     $conn = $database->connect_db();
+    
+    debugLog("4. Instantiating DateHelper");
     $dateHelper = new DateHelper($conn);
 
+    debugLog("5. Querying min/max dates");
     // Get date range from log_data
     $query = "SELECT 
                 MIN(tanggal_pengajuan) as min_date,
@@ -26,12 +39,14 @@ try {
     $stmt = sqlsrv_query($conn, $query);
 
     if (!$stmt) {
+        debugLog("6. Query failed: " . print_r(sqlsrv_errors(), true));
         throw new Exception("Failed to fetch date range");
     }
 
     $result = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
 
     if (!$result || !$result['min_date']) {
+        debugLog("7. No data available");
         // No data available
         echo json_encode([
             'success' => true,
@@ -43,6 +58,8 @@ try {
     $minDate = $result['min_date'];
     $maxDate = $result['max_date'];
 
+    debugLog("8. Min date: " . (is_object($minDate) ? $minDate->format('Y-m-d') : $minDate));
+    
     // Convert to DateTime objects
     $startDate = ($minDate instanceof DateTime) ? $minDate : new DateTime($minDate);
     $endDate   = ($maxDate instanceof DateTime) ? $maxDate : new DateTime($maxDate);
@@ -57,6 +74,7 @@ try {
     $weekNumber = 1;
     $previousCutoff = null;
 
+    debugLog("9. Starting loop");
     // Loop until we cover the max date
     while ($previousCutoff === null || $previousCutoff < $endDate) {
         // 1. Determine the nominal start of the week (Monday)
@@ -121,6 +139,7 @@ try {
         $weekNumber++;
     }
 
+    debugLog("10. Loop finished, returning JSON");
     $database->disconnect();
 
     echo json_encode([
@@ -129,10 +148,18 @@ try {
     ]);
 
 } catch (Exception $e) {
+    debugLog("Exception caught: " . $e->getMessage());
     http_response_code(500);
     echo json_encode([
         'success' => false,
         'message' => $e->getMessage()
+    ]);
+} catch (Error $e) {
+    debugLog("Fatal Error caught: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
+    http_response_code(500);
+    echo json_encode([
+        'success' => false,
+        'message' => "Internal Server Error"
     ]);
 }
 ?>
