@@ -1,169 +1,45 @@
-<?php
-require_once __DIR__ . '/../../../config/config.php';
-require_once __DIR__ . '/../../../helpers/DateHelper.php';
+<!-- Validation Modal -->
+    <div id="validationModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50">
+        <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div class="mt-3">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">Validasi Data HP</h3>
+                    <button onclick="closeValidationModal()" class="text-gray-400 hover:text-gray-500">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <form id="validationForm">
+                    <input type="hidden" id="validation_id">
+                    
+                    <div class="mb-4">
+                        <p class="text-sm text-gray-600 mb-1">Barcode:</p>
+                        <p class="font-bold text-gray-800" id="validation_barcode_display">-</p>
+                        <input type="hidden" id="validation_barcode">
+                    </div>
 
-header('Content-Type: application/json');
+                    <div class="mb-4">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Status Validasi *</label>
+                        <select id="validation_status" onchange="toggleValidationNotes()" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" required>
+                            <option value="">-- Pilih Status --</option>
+                            <option value="valid">Valid</option>
+                            <option value="invalid">Tidak Valid</option>
+                        </select>
+                    </div>
 
-function debugLog($msg) {
-    file_put_contents(__DIR__ . '/debug_get_weeks.log', date('Y-m-d H:i:s') . ' - ' . $msg . PHP_EOL, FILE_APPEND);
-}
+                    <div id="validation_notes_container" class="mb-4 hidden">
+                        <label class="block text-gray-700 text-sm font-bold mb-2">Keterangan / Notes *</label>
+                        <textarea id="validation_notes" rows="3" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" placeholder="Masukkan alasan kenapa tidak valid..."></textarea>
+                    </div>
 
-debugLog("1. Started get_weeks.php");
-
-// Check authentication
-if (!isLoggedIn()) {
-    debugLog("Auth failed");
-    http_response_code(401);
-    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
-    exit;
-}
-
-try {
-    debugLog("2. Instantiating DB");
-    $database = new MyDatabase();
-    
-    debugLog("3. Connecting DB");
-    $conn = $database->connect_db();
-    
-    debugLog("4. Instantiating DateHelper");
-    $dateHelper = new DateHelper($conn);
-
-    debugLog("5. Querying min/max dates");
-    // Get date range from log_data
-    $query = "SELECT 
-                MIN(tanggal_pengajuan) as min_date,
-                MAX(tanggal_pengajuan) as max_date
-              FROM dbo.invenlist_log_data
-              WHERE tanggal_pengajuan IS NOT NULL";
-
-    $stmt = sqlsrv_query($conn, $query);
-
-    if (!$stmt) {
-        debugLog("6. Query failed: " . print_r(sqlsrv_errors(), true));
-        throw new Exception("Failed to fetch date range");
-    }
-
-    $result = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC);
-
-    if (!$result || !$result['min_date']) {
-        debugLog("7. No data available");
-        // No data available
-        echo json_encode([
-            'success' => true,
-            'weeks'   => []
-        ]);
-        exit;
-    }
-
-    $minDate = $result['min_date'];
-    $maxDate = $result['max_date'];
-
-    debugLog("8. Min date: " . (is_object($minDate) ? $minDate->format('Y-m-d') : $minDate));
-    
-    // Convert to DateTime objects
-    $startDate = ($minDate instanceof DateTime) ? $minDate : new DateTime($minDate);
-    $endDate   = ($maxDate instanceof DateTime) ? $maxDate : new DateTime($maxDate);
-
-    // Find the first Monday on or before startDate
-    $current = clone $startDate;
-    while ($current->format('N') != 1) { // 1 = Monday
-        $current->modify('-1 day');
-    }
-
-    $weeks      = [];
-    $weekNumber = 1;
-    $previousCutoff = null;
-
-    debugLog("9. Starting loop");
-    // Loop until we cover the max date
-    while ($previousCutoff === null || $previousCutoff < $endDate) {
-        // 1. Determine the nominal start of the week (Monday)
-        $nominalStart = clone $current;
-
-        // 2. Calculate the cutoff date (Friday or earlier if holiday)
-        $cutoffDate = $dateHelper->calculateCutoffDate($nominalStart);
-
-        // 3. Set the cutoff time to 12:00:00
-        $weekEndTimestamp = clone $cutoffDate;
-        $weekEndTimestamp->setTime(12, 0, 0);
-
-        // 4. Determine the start timestamp for this week
-        if ($previousCutoff === null) {
-            // First week: Start from Monday 00:00:00
-            $weekStartTimestamp = clone $nominalStart;
-            $weekStartTimestamp->setTime(0, 0, 0);
-        } else {
-            // Subsequent weeks: Start immediately after previous cutoff
-            $weekStartTimestamp = clone $previousCutoff;
-        }
-
-        // 5. Count records in this week range
-        $operator   = ($previousCutoff === null) ? '>=' : '>';
-        $countQuery = "SELECT COUNT(*) as count 
-                       FROM dbo.invenlist_log_data 
-                       WHERE tanggal_pengajuan $operator ? 
-                       AND tanggal_pengajuan <= ?";
-
-        $countParams = [
-            $weekStartTimestamp->format('Y-m-d H:i:s'),
-            $weekEndTimestamp->format('Y-m-d H:i:s')
-        ];
-
-        $countStmt = sqlsrv_query($conn, $countQuery, $countParams);
-        if ($countStmt === false) {
-            $count = 0;
-        } else {
-            $countResult = sqlsrv_fetch_array($countStmt, SQLSRV_FETCH_ASSOC);
-            $count = $countResult['count'] ?? 0;
-        }
-
-        // 6. Add week to list (only if it has data)
-        if ($count > 0) {
-            $weeks[] = [
-                'week_number' => $weekNumber,
-                'start_date'  => $weekStartTimestamp->format('Y-m-d H:i:s'),
-                'end_date'    => $weekEndTimestamp->format('Y-m-d H:i:s'),
-                'label'       => sprintf(
-                    'Minggu %d (%s - %s)',
-                    $weekNumber,
-                    $nominalStart->format('d M'),
-                    $cutoffDate->format('d M Y')
-                ),
-                'count' => $count
-            ];
-        }
-
-        // 7. Update previous cutoff and advance to next Monday
-        $previousCutoff = clone $weekEndTimestamp;
-        $current->modify('+7 days');
-        $weekNumber++;
-    }
-
-    debugLog("10. Loop finished, returning JSON");
-    if ($conn && is_resource($conn)) {
-        sqlsrv_close($conn);
-    }
-
-    echo json_encode([
-        'success' => true,
-        'weeks'   => $weeks
-    ]);
-
-} catch (Exception $e) {
-    debugLog("Exception caught: " . $e->getMessage());
-    // Use 200 instead of 500 to prevent IIS/Apache from intercepting and returning HTML
-    http_response_code(200);
-    echo json_encode([
-        'success' => false,
-        'message' => $e->getMessage()
-    ]);
-} catch (Error $e) {
-    debugLog("Fatal Error caught: " . $e->getMessage() . " at " . $e->getFile() . ":" . $e->getLine());
-    // Use 200 instead of 500 to prevent IIS/Apache from intercepting and returning HTML
-    http_response_code(200);
-    echo json_encode([
-        'success' => false,
-        'message' => "Internal Server Error: " . $e->getMessage()
-    ]);
-}
-?>
+                    <div class="flex justify-end gap-2 mt-4">
+                        <button type="button" onclick="closeValidationModal()" class="px-4 py-2 bg-gray-300 text-gray-800 text-sm font-medium rounded-md shadow-sm hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-300">
+                            Batal
+                        </button>
+                        <button type="button" onclick="saveValidation()" class="px-4 py-2 bg-blue-500 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300">
+                            Simpan
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
